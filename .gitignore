@@ -1,0 +1,23 @@
+# Compiled binaries
+server
+client
+
+# Object files
+*.o
+*.obj
+
+# Executables
+*.exe
+*.out
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE files
+*.swp
+*.swo
+*~
+
+# Log files
+*.log
