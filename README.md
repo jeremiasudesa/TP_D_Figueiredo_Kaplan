@@ -1,3 +1,7 @@
+# TP_D_Figueiredo_Kaplan
+
+Este repositorio contiene la implementación de Jeremias Figueiredo Paschmann y Juan Kaplan al Trabajo Desarrollo de la materia Redes y Comunicación.
+
 # TP D: Aplicación Distribuida con BSD Sockets
 
 Este proyecto implementa un medidor de throughput y latencia usando BSD sockets con un cliente y servidor que se comunican mediante TCP y UDP.
