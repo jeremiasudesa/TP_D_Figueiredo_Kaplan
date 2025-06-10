@@ -64,9 +64,6 @@ void *upload_server_thread(void *arg)
   pthread_exit(NULL);
 }
 
-// -----------------------------------------------------------------------------
-// Función principal del servidor
-// -----------------------------------------------------------------------------
 int server_upload(upload_result_t *res, int N, int T)
 {
   // Crear socket TCP
