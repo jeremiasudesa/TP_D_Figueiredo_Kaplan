@@ -11,8 +11,8 @@
 
 int server_measure_latency(int tries)
 {
-    struct sockaddr_in srv_addr;
-    socklen_t addr_len = sizeof(srv_addr);
+    struct sockaddr_in srv_addr, client_addr;
+    socklen_t addr_len = sizeof(srv_addr), client_addr_len = sizeof(client_addr);
     int sockfd = udp_socket_init(NULL, UDP_SERVER_PORT, &srv_addr, 1);
     if (sockfd < 0)
     {
@@ -21,14 +21,12 @@ int server_measure_latency(int tries)
     }
 
     uint8_t resp[LAT_PAYLOAD_SIZE];
-    struct sockaddr_in client_addr;
-    socklen_t addr_len = sizeof(client_addr);
     int sent = 0;
 
     while (sent < tries)
     {
         ssize_t r = recvfrom(sockfd, resp, LAT_PAYLOAD_SIZE, 0,
-                             (struct sockaddr *)&client_addr, &addr_len);
+                             (struct sockaddr *)&client_addr, &client_addr_len);
 
         if (r < 0)
         {
@@ -58,7 +56,7 @@ int client_measure_latency(const char *srv_ip, int tries, int timeout_sec,
 {
     struct sockaddr_in srv_addr, from_addr;
     socklen_t addr_len = sizeof(srv_addr), from_len = sizeof(from_addr);
-    int sockfd = udp_socket_init(srv_ip, UDP_SERVER_PORT, &srv_addr);
+    int sockfd = udp_socket_init(srv_ip, UDP_SERVER_PORT, &srv_addr, 0);
     if (sockfd < 0)
     {
         fprintf(stderr, "Error initializing UDP socket\n");
