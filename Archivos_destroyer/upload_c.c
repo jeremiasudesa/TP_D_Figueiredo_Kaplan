@@ -42,7 +42,7 @@ void *upload_thread(void *arg) {
   return NULL; // Terminar el hilo
 }
 
-int client_upload(const char *srv_ip, int N, int T) {
+int client_upload(const char *srv_ip, int N) {
   // Crear sockets TCP
   struct sockaddr_in srv_addr;
   srv_addr.sin_family = AF_INET;
@@ -91,6 +91,7 @@ int client_upload(const char *srv_ip, int N, int T) {
   // Esperar a que terminen los hilos
   for (int i = 0; i < N; i++) {
     pthread_join(threads[i], NULL);
+    close(socks[i]); // Cerrar socket
   }
 
   // Falta logica de pedir info al servidor y recibir respuesta
