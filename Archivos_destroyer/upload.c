@@ -6,46 +6,10 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
-
 #include "common.h"
+#include "upload.h"
 #include "handle_result.c"
 
-#define TCP_PORT_UPLOAD 20252
-#define UDP_PORT_RESULTS 20251
-#define MAX_PAYLOAD (8 * 1024) // 8 KB
-
-// -----------------------------------------------------------------------------
-// Estructuras de datos
-// -----------------------------------------------------------------------------
-
-// Resultado de cada conexión de subida
-typedef struct
-{
-  uint8_t test_id[4];  // identificador de prueba
-  uint16_t conn_id;    // identificador de conexión (1…N)
-  uint64_t bytes_recv; // total de bytes leídos
-  double duration;     // segundos efectivos de lectura
-} upload_result_t;
-
-// Parámetros que recibe cada hilo del cliente
-typedef struct
-{
-  int sockfd;        // socket ya conectado
-  size_t buf_size;   // tamaño del buffer de envío
-  uint8_t header[6]; // encabezado de 6 bytes
-} cli_thread_arg_t;
-
-// Parámetros que recibe cada hilo del servidor
-typedef struct
-{
-  int conn_fd;
-  upload_result_t *res; // puntero donde escribir el resultado
-  int T;                // tiempo total de la conexión en segundos
-} srv_thread_arg_t;
-
-// -----------------------------------------------------------------------------
-// Función de hilo: servidor de subida
-// -----------------------------------------------------------------------------
 void *upload_server_thread(void *arg)
 {
   srv_thread_arg_t *args = arg;
@@ -53,9 +17,7 @@ void *upload_server_thread(void *arg)
   socklen_t client_addr_len = sizeof(client_addr);
 
   // Aceptar la conexión entrante
-  int conn_fd = accept(args->conn_fd,
-                       (struct sockaddr *)&client_addr,
-                       &client_addr_len);
+  int conn_fd = accept(args->conn_fd, (struct sockaddr *)&client_addr, &client_addr_len);
   if (conn_fd < 0)
   {
     perror("accept");
@@ -160,7 +122,6 @@ int server_upload(upload_result_t *res, int N, int T)
   {
     pthread_join(threads[i], NULL);
   }
-  close(sockfd);
 
   // --- Agrupar y enviar resultados por UDP ---
   struct BW_result bw_result;
@@ -224,9 +185,6 @@ int server_upload(upload_result_t *res, int N, int T)
   return 0;
 }
 
-// -----------------------------------------------------------------------------
-// Función de hilo: cliente de subida
-// -----------------------------------------------------------------------------
 void *upload_client_thread(void *arg)
 {
   cli_thread_arg_t *args = arg;
@@ -244,18 +202,18 @@ void *upload_client_thread(void *arg)
   memset(buf, 0xAA, args->buf_size);
 
   // Enviar datos en bucle
-  while (send(args->sockfd, buf, args->buf_size, 0) > 0)
+  while (1)
   {
-    // nada más
+    if (send(args->sockfd, buf, args->buf_size, 0) <= 0)
+    {
+      break;
+    }
   }
 
   free(buf);
   return NULL;
 }
 
-// -----------------------------------------------------------------------------
-// Función principal del cliente
-// -----------------------------------------------------------------------------
 int client_upload(const char *srv_ip, int N)
 {
   struct sockaddr_in srv_addr = {
