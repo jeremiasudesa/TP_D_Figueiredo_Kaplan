@@ -11,6 +11,7 @@
 #define LAT_SOCK_ERR -3       // error de socket
 #define LAT_TIMEOUT_ERR -4    // timeout al recibir
 #define UDP_SERVER_PORT 20251 // puerto del servidor UDP de latencia
+
 // Atiende peticiones de latencia en el servidor
 int server_measure_latency(int tries);
 

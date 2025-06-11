@@ -4,3 +4,4 @@
 #define TCP_PORT_DOWN "20251"
 #define MAX_BACKLOG 64
 #define PAYLOAD 16384
+#define N_CONN 10

@@ -7,6 +7,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdlib.h>
 #include "latency.h"
 
 int server_measure_latency(int tries)
@@ -25,8 +26,7 @@ int server_measure_latency(int tries)
 
     while (sent < tries)
     {
-        ssize_t r = recvfrom(sockfd, resp, LAT_PAYLOAD_SIZE, 0,
-                             (struct sockaddr *)&client_addr, &client_addr_len);
+        ssize_t r = recvfrom(sockfd, resp, LAT_PAYLOAD_SIZE, 0, (struct sockaddr *)&client_addr, &client_addr_len);
 
         if (r < 0)
         {
