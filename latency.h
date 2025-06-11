@@ -15,6 +15,9 @@
 // Atiende peticiones de latencia en el servidor
 int server_measure_latency(int tries);
 
+// Inicia el servicio de latencia en el servidor
+void *latency_echo_server(void *args);
+
 // Mide RTT desde el cliente
 int client_measure_latency(const char *srv_ip, int tries, int timeout_sec, double *rtts);
 

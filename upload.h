@@ -28,9 +28,10 @@ typedef struct
 // Parámetros para cada hilo del servidor de subida
 typedef struct
 {
-    int conn_fd;          // Descriptor del socket de escucha
-    upload_result_t *res; // Puntero donde escribir el resultado
-    int T;                // Tiempo total de la conexión en segundos
+    int conn_fd;           // Descriptor del socket de escucha
+    upload_result_t *res;  // Puntero donde escribir el resultado
+    struct timespec start; // Tiempo de inicio de la conexión
+    int T;                 // Tiempo total de la conexión en segundos
 } srv_thread_arg_t;
 
 // Atiende una conexión TCP de subida en el servidor

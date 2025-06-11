@@ -74,22 +74,6 @@ static int create_listening_socket(const char *port)
     return fd;
 }
 
-static void *latency_server_thread()
-{
-    printf("server: UDP latency service on port %d …\n", UDP_SERVER_PORT);
-
-    while (1)
-    {
-        int rc = server_measure_latency(MAX_LATENCY_REQUESTS);
-        if (rc != LAT_OK)
-        {
-            fprintf(stderr, "latency server error: %d\n", rc);
-            sleep(1);
-        }
-    }
-    return NULL;
-}
-
 static void *download_worker(void *arg)
 {
     int client_fd = *(int *)arg;
@@ -106,7 +90,7 @@ static void *download_worker(void *arg)
 int main()
 {
     pthread_t latency_thr;
-    if (pthread_create(&latency_thr, NULL, latency_server_thread, NULL) != 0)
+    if (pthread_create(&latency_thr, NULL, latency_echo_server, NULL) != 0)
     {
         perror("pthread_create (latency thread)");
         return EXIT_FAILURE;

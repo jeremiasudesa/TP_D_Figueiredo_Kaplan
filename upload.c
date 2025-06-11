@@ -13,32 +13,6 @@
 void *upload_server_thread(void *arg)
 {
   srv_thread_arg_t *args = arg;
-  struct sockaddr_in client_addr;
-  socklen_t client_addr_len = sizeof(client_addr);
-
-  // Aceptar la conexión entrante
-  int conn_fd = accept(args->conn_fd, (struct sockaddr *)&client_addr, &client_addr_len);
-  if (conn_fd < 0)
-  {
-    perror("accept");
-    pthread_exit(NULL);
-  }
-
-  struct timespec start = now_ts();
-
-  // Leer cabecero de 6 bytes
-  uint8_t header[6];
-  ssize_t r = recv(conn_fd, header, sizeof(header), 0);
-  if (r < 0)
-  {
-    perror("recv header");
-    close(conn_fd);
-    pthread_exit(NULL);
-  }
-
-  memcpy(args->res->test_id, header, 4);
-  args->res->conn_id = ntohs(*(uint16_t *)(header + 4));
-  args->res->bytes_recv = r;
 
   // Leer datos hasta que se cumpla el tiempo T o se cierre la conexión
   uint8_t buf[MAX_PAYLOAD];
@@ -46,12 +20,12 @@ void *upload_server_thread(void *arg)
   while (1)
   {
     now = now_ts();
-    if (diff_ts(&start, &now) >= args->T)
+    if (diff_ts(&args->start, &now) >= args->T)
     {
       break;
     }
 
-    r = recv(conn_fd, buf, sizeof(buf), 0);
+    ssize_t r = recv(args->conn_fd, buf, sizeof(buf), 0);
     if (r <= 0)
     {
       break;
@@ -59,8 +33,8 @@ void *upload_server_thread(void *arg)
     args->res->bytes_recv += r;
   }
 
-  args->res->duration = diff_ts(&start, &now);
-  close(conn_fd);
+  args->res->duration = diff_ts(&args->start, &now);
+  close(args->conn_fd);
   pthread_exit(NULL);
 }
 
@@ -75,12 +49,12 @@ int server_upload(upload_result_t *res, int N, int T)
   }
 
   // Configurar dirección del servidor
-  struct sockaddr_in srv_addr = {
+  struct sockaddr_in srv_tcp_addr = {
       .sin_family = AF_INET,
       .sin_addr.s_addr = INADDR_ANY,
       .sin_port = htons(TCP_PORT_UPLOAD)};
 
-  if (bind(sockfd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) < 0)
+  if (bind(sockfd, (struct sockaddr *)&srv_tcp_addr, sizeof(srv_tcp_addr)) < 0)
   {
     perror("bind");
     close(sockfd);
@@ -98,24 +72,80 @@ int server_upload(upload_result_t *res, int N, int T)
   pthread_t threads[N];
   srv_thread_arg_t args[N];
 
+  struct sockaddr_in client_addr;
+  socklen_t len = sizeof(client_addr);
+
+  uint8_t first_test_id[4];
+  in_addr_t first_ip;
+  int established_connections = 0;
+
   for (int i = 0; i < N; i++)
   {
-    args[i].conn_fd = sockfd;
-    args[i].res = &res[i];
-    args[i].T = T;
+    // Aceptar conexión entrante
+    int conn_fd = accept(sockfd, (struct sockaddr *)&client_addr, &len);
+    if (conn_fd < 0)
+    {
+      perror("accept");
+      continue;
+    }
+    struct timespec start = now_ts();
 
-    if (pthread_create(&threads[i], NULL,
+    // 1) Leer header de 6 bytes
+    uint8_t header[6], pre_test_id[4];
+    ssize_t r = recv(conn_fd, header, sizeof(header), 0);
+    if (r < 0)
+    {
+      perror("recv header");
+      close(conn_fd);
+      continue;
+    }
+
+    // Checkeo si las conexiones pertenecen al mismo cliente
+    if (established_connections == 0)
+    {
+      memcpy(first_test_id, header, 4);
+      first_ip = client_addr.sin_addr.s_addr;
+    }
+    else
+    {
+      if (memcmp(header, first_test_id, 4) != 0 ||
+          client_addr.sin_addr.s_addr != first_ip)
+      {
+        fprintf(stderr,
+                "Conexión ignorada: test_id o IP no coinciden\n");
+        close(conn_fd);
+        continue;
+      }
+    }
+
+    // 3) Aquí ya admito la conexión “válida”
+    args[established_connections].conn_fd = conn_fd;
+    args[established_connections].res = &res[established_connections];
+    args[established_connections].start = start;
+    args[established_connections].T = T;
+
+    // Inicializo el resultado (incluye los 6 bytes del header)
+    res[established_connections].bytes_recv = 6; // Inicializar bytes recibidos
+    res[established_connections].conn_id = ntohs(*(uint16_t *)(header + 4));
+    memcpy(res[established_connections].test_id, header, 4);
+
+    // Lanzar hilo para manejar la conexión
+    if (pthread_create(&threads[established_connections], NULL,
                        upload_server_thread,
-                       &args[i]) != 0)
+                       &args[established_connections]) != 0)
     {
       perror("pthread_create");
       close(sockfd);
       return -1;
     }
+
+    established_connections++;
   }
 
+  printf("Aceptadas %d conexiones del mismo cliente: %d\n", established_connections, (uint32_t)first_test_id);
+
   // Esperar a que terminen todos los hilos
-  for (int i = 0; i < N; i++)
+  for (int i = 0; i < established_connections; i++)
   {
     pthread_join(threads[i], NULL);
   }
@@ -124,28 +154,18 @@ int server_upload(upload_result_t *res, int N, int T)
   struct BW_result bw_result;
   bw_result.id_measurement = (uint32_t)res[0].test_id;
 
-  for (int i = 0; i < N; i++)
+  for (int i = 0; i < established_connections; i++)
   {
     bw_result.conn_bytes[i] = res[i].bytes_recv;
     bw_result.conn_duration[i] = res[i].duration;
   }
 
-  int udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
+  struct sockaddr_in srv_udp_addr;
+  int udp_sock = udp_socket_init(NULL, UDP_PORT_RESULTS, &srv_udp_addr, 1);
   if (udp_sock < 0)
   {
-    perror("socket UDP");
-    return -1;
-  }
-
-  struct sockaddr_in udp_addr = {
-      .sin_family = AF_INET,
-      .sin_port = htons(UDP_PORT_RESULTS),
-      .sin_addr.s_addr = INADDR_ANY};
-
-  if (bind(udp_sock, (struct sockaddr *)&udp_addr, sizeof(udp_addr)) < 0)
-  {
-    perror("bind UDP");
-    close(udp_sock);
+    fprintf(stderr, "Error initializing UDP socket\n");
+    close(sockfd);
     return -1;
   }
 
@@ -153,23 +173,25 @@ int server_upload(upload_result_t *res, int N, int T)
   uint8_t id_buf[4];
   struct sockaddr_in client_udp;
   socklen_t client_udp_len = sizeof(client_udp);
-
-  ssize_t recv_len = recvfrom(udp_sock, id_buf, sizeof(id_buf), 0,
-                              (struct sockaddr *)&client_udp,
-                              &client_udp_len);
-  if (recv_len != sizeof(id_buf))
+  while (1)
   {
-    perror("recv UDP");
-    close(udp_sock);
-    return -1;
-  }
+    ssize_t recv_len = recvfrom(udp_sock, id_buf, sizeof(id_buf), 0,
+                                (struct sockaddr *)&client_udp,
+                                &client_udp_len);
+    if (recv_len != sizeof(id_buf))
+    {
+      perror("recv UDP");
+      continue; // Esperar otro ID
+    }
 
-  // 2) Verificar coincidencia de ID
-  if (memcmp(id_buf, &bw_result.id_measurement, sizeof(id_buf)) != 0)
-  {
-    fprintf(stderr, "ID de prueba no coincide\n");
-    close(udp_sock);
-    return -1;
+    // 2) Verificar coincidencia de ID
+    if (memcmp(id_buf, &bw_result.id_measurement, sizeof(id_buf)) != 0)
+    {
+      fprintf(stderr, "ID de prueba no coincide\n");
+      continue; // Esperar otro ID
+    }
+    // ID coincide,  salir del bucle
+    break;
   }
 
   // 3) Serializar y enviar resultados

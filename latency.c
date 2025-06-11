@@ -51,6 +51,45 @@ int server_measure_latency(int tries)
     return LAT_OK;
 }
 
+void *latency_echo_server(void *args)
+{
+    printf("server: UDP latency service on port %d …\n", UDP_SERVER_PORT);
+    struct sockaddr_in srv_addr, client_addr;
+    socklen_t addr_len = sizeof(srv_addr), client_addr_len = sizeof(client_addr);
+    int sockfd = udp_socket_init(NULL, UDP_SERVER_PORT, &srv_addr, 1);
+    if (sockfd < 0)
+    {
+        fprintf(stderr, "Error initializing UDP socket\n");
+        return NULL;
+    }
+
+    uint8_t resp[LAT_PAYLOAD_SIZE];
+    while (1)
+    {
+        ssize_t r = recvfrom(sockfd, resp, LAT_PAYLOAD_SIZE, 0, (struct sockaddr *)&client_addr, &client_addr_len);
+        if (r < 0)
+        {
+            perror("recvfrom");
+            continue; // Ignora errores de recepción
+        }
+        if (r != LAT_PAYLOAD_SIZE || resp[0] != 0xff)
+        {
+            fprintf(stderr, "Invalid packet received\n");
+            continue; // Ignora paquetes inválidos
+        }
+        // Responde con el mismo paquete recibido
+        if (sendto(sockfd, resp, LAT_PAYLOAD_SIZE, 0, (struct sockaddr *)&client_addr, addr_len) < 0)
+        {
+            perror("sendto");
+            continue; // Ignora errores de envío
+        }
+        printf("Echoed packet to %s:%d\n",
+               inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+    }
+    close(sockfd);
+    return NULL;
+}
+
 int client_measure_latency(const char *srv_ip, int tries, int timeout_sec,
                            double *rtts)
 {
