@@ -1,6 +1,7 @@
+#define _POSIX_C_SOURCE 200112L
+
 #include <arpa/inet.h>
 #include <errno.h>
-#include <netdb.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -9,6 +10,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <netdb.h>
 
 #include "config.h"
 #include "download.h"

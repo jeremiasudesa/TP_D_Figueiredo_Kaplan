@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200112L
+
 #include "download.h"
 #include "config.h"     // For T_SECONDS, PAYLOAD
 #include <stdio.h>      // For perror, fprintf

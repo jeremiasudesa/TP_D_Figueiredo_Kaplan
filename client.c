@@ -1,4 +1,3 @@
-/* Client for download-throughput test – keeps original variable names */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,7 +42,7 @@ static void *latency_thread(void *vp)
 
     printf("client: starting latency measurements during download...\n");
 
-    int result = client_measure_latency(arg->host, arg->num_measurements, 5, arg->rtts);
+    int result = client_measure_latency(arg->host, arg->num_measurements, 10, arg->rtts);
     if (result != LAT_OK)
     {
         fprintf(stderr, "Error in latency measurements: %d\n", result);
@@ -63,7 +62,7 @@ int run_pipeline(const char *host, int num_connections)
     pthread_t *download_tids = calloc(num_connections, sizeof(pthread_t));
     struct thr_arg *download_args = calloc(num_connections, sizeof(struct thr_arg));
 
-    int num_latency_measurements = T_SECONDS;
+    int num_latency_measurements = RTT_TRIES;
     double *rtts = calloc(num_latency_measurements, sizeof(double));
     struct latency_arg lat_arg = {
         .host = host,
@@ -98,7 +97,7 @@ int run_pipeline(const char *host, int num_connections)
     double elapsed = (t_end.tv_sec - t_start.tv_sec) +
                      (t_end.tv_nsec - t_start.tv_nsec) / 1e9;
 
-    printf("me llegaron %llu bytes\n", total_bytes);
+    printf("me llegaron %lu bytes\n", total_bytes);
     printf("Pasaron %.3f segundos\n", elapsed);
     printf("Entonces, el throughput es %.2f Mb/s\n", (total_bytes * 8.0) / (elapsed * 1e6));
 
