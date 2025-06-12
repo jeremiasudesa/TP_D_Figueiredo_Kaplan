@@ -9,50 +9,50 @@
 #include <errno.h>
 #include <stdlib.h>
 #include "latency.h"
+#include "handle_result.h"
 
-int server_measure_latency(int tries)
+int send_results_udp(int sockfd, uint8_t *resp, results_lock_t *results_lock,
+                     struct sockaddr_in client_addr, socklen_t client_addr_len)
 {
-    struct sockaddr_in srv_addr, client_addr;
-    socklen_t addr_len = sizeof(srv_addr), client_addr_len = sizeof(client_addr);
-    int sockfd = udp_socket_init(NULL, UDP_SERVER_PORT, &srv_addr, 1);
-    if (sockfd < 0)
+    pthread_mutex_lock(&results_lock->mutex);
+    struct BW_result *bw_results = results_lock->results;
+    for (int i = 0; i < MAX_CLIENTS; i++)
     {
-        fprintf(stderr, "Error initializing UDP socket\n");
-        return LAT_SOCK_ERR;
+        if (memcmp(&bw_results[i].id_measurement, resp, sizeof(bw_results[i].id_measurement)) == 0)
+        {
+            // Empaqueta el resultado en el buffer de respuesta
+            int bytes_packed = packResultPayload(bw_results[i], resp, LAT_PAYLOAD_SIZE);
+            if (bytes_packed < 0)
+            {
+                fprintf(stderr, "Error packing result payload\n");
+                pthread_mutex_unlock(&results_lock->mutex);
+                return -1;
+            }
+
+            // Envía el resultado empaquetado al cliente
+            if (sendto(sockfd, resp, bytes_packed, 0, (struct sockaddr *)&client_addr, client_addr_len) < 0)
+            {
+                perror("sendto result");
+                pthread_mutex_unlock(&results_lock->mutex);
+                return -1;
+            }
+
+            printf("Sent result for measurement ID 0x%02X%02X%02X%02X to %s:%d\n",
+                   resp[0], resp[1], resp[2], resp[3],
+                   inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+            memset(&bw_results[i], 0, sizeof(bw_results[i]));
+        }
     }
-
-    uint8_t resp[LAT_PAYLOAD_SIZE];
-    int sent = 0;
-
-    while (sent < tries)
-    {
-        ssize_t r = recvfrom(sockfd, resp, LAT_PAYLOAD_SIZE, 0, (struct sockaddr *)&client_addr, &client_addr_len);
-
-        if (r < 0)
-        {
-            perror("recvfrom");
-            return LAT_RECV_ERR;
-        }
-
-        if (r != LAT_PAYLOAD_SIZE || resp[0] != 0xff)
-        {
-            fprintf(stderr, "Invalid packet received\n");
-            continue; // Ignora paquetes inválidos
-        }
-
-        if (sendto(sockfd, resp, LAT_PAYLOAD_SIZE, 0,
-                   (struct sockaddr *)&client_addr, addr_len) < 0)
-        {
-            perror("sendto");
-            return LAT_SEND_ERR;
-        }
-        sent++;
-    }
-    return LAT_OK;
+    pthread_mutex_unlock(&results_lock->mutex);
+    return 0; // Retorna 0 para indicar éxito
 }
 
 void *latency_echo_server(void *args)
 {
+    echo_server_args_t *echo_args = (echo_server_args_t *)args;
+    results_lock_t *results_lock = echo_args->results_lock;
+
     printf("server: UDP latency service on port %d …\n", UDP_SERVER_PORT);
     struct sockaddr_in srv_addr, client_addr;
     socklen_t addr_len = sizeof(srv_addr), client_addr_len = sizeof(client_addr);
@@ -72,11 +72,21 @@ void *latency_echo_server(void *args)
             perror("recvfrom");
             continue; // Ignora errores de recepción
         }
-        if (r != LAT_PAYLOAD_SIZE || resp[0] != 0xff)
+        if (r != LAT_PAYLOAD_SIZE)
         {
             fprintf(stderr, "Invalid packet received\n");
             continue; // Ignora paquetes inválidos
         }
+
+        // Enviar resultados de Upload si el primer byte no es 0xff
+        if (resp[0] != 0xff)
+        {
+            if (send_results_udp(sockfd, resp, results_lock, client_addr, client_addr_len) < 0)
+            {
+                fprintf(stderr, "Error sending results\n");
+            }
+        }
+
         // Responde con el mismo paquete recibido
         if (sendto(sockfd, resp, LAT_PAYLOAD_SIZE, 0, (struct sockaddr *)&client_addr, addr_len) < 0)
         {

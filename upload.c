@@ -10,6 +10,7 @@
 #include "common.h"
 #include "upload.h"
 #include "handle_result.h"
+#include "config.h"
 
 void *upload_server_thread(void *arg)
 {
@@ -39,7 +40,7 @@ void *upload_server_thread(void *arg)
   pthread_exit(NULL);
 }
 
-int server_upload(int N, int T)
+int server_upload(int N, int T, results_lock_t *results_lock)
 {
   upload_result_t res[N];
   // Crear socket TCP
@@ -153,7 +154,7 @@ int server_upload(int N, int T)
     pthread_join(threads[i], NULL);
   }
 
-  // --- Agrupar y enviar resultados por UDP ---
+  // --- Agrupar resultados
   struct BW_result bw_result;
   // Convert test_id bytes to uint32_t safely
   bw_result.id_measurement = ((uint32_t)res[0].test_id[0] << 24) |
@@ -167,48 +168,19 @@ int server_upload(int N, int T)
     bw_result.conn_duration[i] = res[i].duration;
   }
 
-  struct sockaddr_in srv_udp_addr;
-  int udp_sock = udp_socket_init(NULL, UDP_PORT_RESULTS, &srv_udp_addr, 1);
-  if (udp_sock < 0)
+  // Guardar resultados en el lock
+  pthread_mutex_lock(&results_lock->mutex);
+  for (int i = 0; i < MAX_CLIENTS; i++)
   {
-    fprintf(stderr, "Error initializing UDP socket\n");
-    close(sockfd);
-    return -1;
-  }
-
-  // 1) Recibir ID de medición del cliente
-  uint8_t id_buf[4];
-  struct sockaddr_in client_udp;
-  socklen_t client_udp_len = sizeof(client_udp);
-  while (1)
-  {
-    ssize_t recv_len = recvfrom(udp_sock, id_buf, sizeof(id_buf), 0,
-                                (struct sockaddr *)&client_udp,
-                                &client_udp_len);
-    if (recv_len != sizeof(id_buf))
+    if (results_lock->results[i].id_measurement == 0)
     {
-      perror("recv UDP");
-      continue; // Esperar otro ID
+      results_lock->results[i] = bw_result;
+      break;
     }
-
-    // 2) Verificar coincidencia de ID
-    if (memcmp(id_buf, &bw_result.id_measurement, sizeof(id_buf)) != 0)
-    {
-      fprintf(stderr, "ID de prueba no coincide\n");
-      continue; // Esperar otro ID
-    }
-    // ID coincide,  salir del bucle
-    break;
   }
+  pthread_mutex_unlock(&results_lock->mutex);
 
-  // 3) Serializar y enviar resultados
-  uint8_t outbuf[MAX_PAYLOAD];
-  int outlen = packResultPayload(bw_result, outbuf, sizeof(outbuf));
-  sendto(udp_sock, outbuf, outlen, 0,
-         (struct sockaddr *)&client_udp, client_udp_len);
-
-  close(udp_sock);
-  return 0;
+  return 0; // Retornar 0 para indicar éxito
 }
 
 void *upload_client_thread(void *arg)

@@ -18,6 +18,7 @@
 #include "latency.h"
 #include "upload.h"
 #include "handle_result.h" /* For struct BW_result and packResultPayload */
+#include "common.h"        /* For results_lock_t, udp_socket_init, now_ts, diff_ts, die */
 
 #define IPV4_STRLEN 16
 #define MAX_LATENCY_REQUESTS 1000
@@ -27,10 +28,16 @@ static void *latency_server_thread();
 static void *download_worker(void *arg);
 static void *upload_worker(void *arg);
 
+typedef struct upload_worker_args
+{
+    results_lock_t *results_lock;
+} upload_worker_args_t;
+
 // Upload server handler thread
 static void *upload_worker(void *arg)
 {
-    server_upload(N_CONN, T_SECONDS);
+    upload_worker_args_t *args = (upload_worker_args_t *)arg;
+    server_upload(N_CONN, T_SECONDS, args->results_lock);
     return NULL;
 }
 
@@ -100,9 +107,26 @@ static void *download_worker(void *arg)
 
 int main()
 {
+    // Initicializo lista de resultados para los clientes
+    results_lock_t results_lock;
+    if (pthread_mutex_init(&results_lock.mutex, NULL) != 0)
+    {
+        perror("pthread_mutex_init");
+        return EXIT_FAILURE;
+    }
+
+    results_lock.results = calloc(MAX_CLIENTS, sizeof *results_lock.results);
+    if (!results_lock.results)
+    {
+        perror("calloc");
+        pthread_mutex_destroy(&results_lock.mutex);
+        return EXIT_FAILURE;
+    }
+
     // Start latency echo service in background
     pthread_t latency_thr;
-    if (pthread_create(&latency_thr, NULL, latency_echo_server, NULL) != 0)
+    echo_server_args_t echo_args = {.results_lock = &results_lock};
+    if (pthread_create(&latency_thr, NULL, latency_echo_server, &echo_args) != 0)
     {
         perror("pthread_create (latency thread)");
         return EXIT_FAILURE;

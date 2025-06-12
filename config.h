@@ -6,3 +6,4 @@
 #define MAX_BACKLOG 64
 #define PAYLOAD 16384
 #define N_CONN 10
+#define MAX_CLIENTS 10
