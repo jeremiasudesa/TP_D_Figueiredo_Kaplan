@@ -14,36 +14,6 @@
 #include "upload.h"
 #include "handle_result.h" // For struct BW_result and packResultPayload
 
-struct watchdog_arg
-{
-    pthread_t *thread_to_watch;
-    int timeout_seconds;
-    volatile int *complete_flag;
-};
-
-// Watchdog thread function to monitor other threads with timeout
-static void *watchdog_thread(void *arg)
-{
-    struct watchdog_arg *warg = (struct watchdog_arg *)arg;
-
-    // Sleep for short intervals and check if the main thread has
-    // marked the operation as complete
-    for (int i = 0; i < warg->timeout_seconds && !*(warg->complete_flag); i++)
-    {
-        sleep(1);
-    }
-
-    // If operation is not complete after timeout, cancel the thread
-    if (!*(warg->complete_flag))
-    {
-        printf("Thread timed out after %d seconds. Cancelling...\n",
-               warg->timeout_seconds);
-        pthread_cancel(*(warg->thread_to_watch));
-    }
-
-    return NULL;
-}
-
 struct thr_arg
 {
     const char *host;
@@ -106,8 +76,7 @@ static void *latency_thread(void *vp)
     return NULL;
 }
 
-// Exporta los resultados en formato JSON via UDP
-int export_results_json(const struct test_results *results, const char *logstash_ip, int logstash_port)
+int export_results_json(const struct test_results *results, const char *result_ip, int result_port)
 {
     char json_buffer[1024];    // Buffer para el JSON
     char timestamp_buffer[32]; // Buffer para el timestamp
@@ -143,8 +112,8 @@ int export_results_json(const struct test_results *results, const char *logstash
              results->rtt_upload);
 
     // Crear socket UDP
-    struct sockaddr_in logstash_addr;
-    int sock = udp_socket_init(logstash_ip, logstash_port, &logstash_addr, 0);
+    struct sockaddr_in result_addr;
+    int sock = udp_socket_init(result_ip, result_port, &result_addr, 0);
     if (sock < 0)
     {
         fprintf(stderr, "Error creating socket for JSON export\n");
@@ -153,21 +122,21 @@ int export_results_json(const struct test_results *results, const char *logstash
 
     // Enviar JSON
     if (sendto(sock, json_buffer, strlen(json_buffer), 0,
-               (struct sockaddr *)&logstash_addr, sizeof(logstash_addr)) < 0)
+               (struct sockaddr *)&result_addr, sizeof(result_addr)) < 0)
     {
         perror("sendto JSON");
         close(sock);
         return -1;
     }
 
-    printf("Results exported in JSON format to %s:%d\n", logstash_ip, logstash_port);
+    printf("Results exported in JSON format to %s:%d\n", result_ip, result_port);
     printf("JSON payload: %s\n", json_buffer);
 
     close(sock);
     return 0;
 }
 
-int run_pipeline(const char *host, int num_connections)
+int run_pipeline(const char *host, int num_connections, const char *result_ip, int result_port)
 {
     // Variables for storing results
     uint64_t download_total_bytes = 0;
@@ -175,8 +144,6 @@ int run_pipeline(const char *host, int num_connections)
     double download_min_rtt = 0, download_max_rtt = 0, download_avg_rtt = 0;
     double upload_min_rtt = 0, upload_max_rtt = 0, upload_avg_rtt = 0;
     double idle_rtt = 0;
-    const char *logstash_ip = "127.0.0.1"; // Change to actual Logstash server IP
-    int logstash_port = 20251;
 
     // Get my own IP (a simple way, can be improved)
     char hostname[256];
@@ -375,8 +342,7 @@ int run_pipeline(const char *host, int num_connections)
         .rtt_download = download_avg_rtt,
         .rtt_upload = upload_avg_rtt};
 
-    // Export results to Logstash
-    export_results_json(&results, logstash_ip, logstash_port);
+    export_results_json(&results, result_ip, result_port);
 
     // Free resources
     free(idle_rtts);
@@ -388,17 +354,19 @@ int run_pipeline(const char *host, int num_connections)
 
 int main(int argc, char *argv[])
 {
-    if (argc != 2)
+    if (argc != 4)
     {
-        fprintf(stderr, "Uso: %s host\n", argv[0]);
+        fprintf(stderr, "Uso: %s host result_ip result_port\n", argv[0]);
         return 1;
     }
     const char *host = argv[1];
+    const char *result_ip = argv[2];
+    int result_port = atoi(argv[3]);
 
     printf("Starting throughput and latency test pipeline for host: %s with %d connection(s).\n", host, N_CONN);
     printf("The pipeline will perform both download and upload tests with latency measurements.\n");
 
-    int result = run_pipeline(host, N_CONN);
+    int result = run_pipeline(host, N_CONN, result_ip, result_port);
 
     if (result == 0)
         printf("\nPipeline completed successfully - both download and upload tests finished.\n");
