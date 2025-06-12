@@ -12,6 +12,7 @@
 #include "download.h"
 #include "latency.h"
 #include "upload.h"
+#include "handle_result.h" // For struct BW_result and packResultPayload
 
 struct watchdog_arg
 {
@@ -101,19 +102,6 @@ static void *latency_thread(void *vp)
         arg->completed = 1;
         printf("client: completed %d latency measurements\n", arg->num_measurements);
     }
-
-    return NULL;
-}
-
-static void *upload_thread(void *vp)
-{
-    struct thr_arg *arg = vp;
-
-    int result = client_upload(arg->host, N_CONN);
-    if (result < 0)
-        fprintf(stderr, "Error in upload thread: %d\n", result);
-    else
-        arg->bytes = result; // Store the returned bytes from upload
 
     return NULL;
 }
@@ -308,9 +296,9 @@ int run_pipeline(const char *host, int num_connections)
     // === Upload + Latency phase ===
     printf("\n=== Starting UPLOAD + latency test ===\n");
 
-    struct thr_arg upload_arg = {.host = host, .bytes = 0};
-    pthread_t upload_tid;
-
+    struct BW_result upload_result;
+    client_upload(host, N_CONN, &upload_result);
+    // Allocate memory for RTT measurements during upload
     double *upload_rtts = calloc(num_latency_measurements, sizeof(double));
     struct latency_arg upload_lat_arg = {
         .host = host,
@@ -322,62 +310,32 @@ int run_pipeline(const char *host, int num_connections)
     struct timespec t_start_upload, t_end_upload;
     clock_gettime(CLOCK_MONOTONIC, &t_start_upload);
 
-    // Create latency thread for upload
+    // Start latency measurement thread
     if (pthread_create(&upload_latency_tid, NULL, latency_thread, &upload_lat_arg) != 0)
-    {
         perror("pthread_create for upload latency");
-        free(upload_rtts);
-        return -1;
-    }
+    // Upload is already called above
+    // Calculate total bytes and find maximum duration
+    uint64_t upload_total_bytes = 0;
+    double upload_elapsed = 0.0;
 
-    // Create upload thread with better error handling
-    printf("Starting upload threads to server %s...\n", host);
-    if (pthread_create(&upload_tid, NULL, upload_thread, &upload_arg) != 0)
+    for (int i = 0; i < N_CONN; i++)
     {
-        perror("pthread_create for upload");
-        pthread_cancel(upload_latency_tid);
-        pthread_join(upload_latency_tid, NULL);
-        free(upload_rtts);
-        return -1;
+        upload_total_bytes += upload_result.conn_bytes[i];
+        if (upload_result.conn_duration[i] > upload_elapsed)
+        {
+            upload_elapsed = upload_result.conn_duration[i];
+        }
     }
 
-    // Wait for upload to complete with timeout protection
-    printf("Waiting for upload threads to complete...\n");
+    double upload_throughput = (upload_total_bytes * 8.0) / upload_elapsed; // in bps
 
-    // Simpler approach: Use a timeout counter instead of pthread_tryjoin_np
-    int upload_complete = 0;
-    void *upload_result = NULL;
-
-    // Start watchdog thread
-    pthread_t watchdog_tid;
-    struct watchdog_arg warg = {&upload_tid, 30, &upload_complete};
-    if (pthread_create(&watchdog_tid, NULL, watchdog_thread, &warg) != 0)
-    {
-        perror("pthread_create for watchdog");
-    }
-
-    // Wait for upload thread to complete
-    pthread_join(upload_tid, &upload_result);
-    upload_complete = 1; // Mark upload as complete
-
-    // Wait for watchdog thread to finish
-    pthread_join(watchdog_tid, NULL);
-
-    // Wait for latency thread
     pthread_join(upload_latency_tid, NULL);
 
     clock_gettime(CLOCK_MONOTONIC, &t_end_upload);
-    double upload_elapsed = (t_end_upload.tv_sec - t_start_upload.tv_sec) +
-                            (t_end_upload.tv_nsec - t_start_upload.tv_nsec) / 1e9;
-
-    // Calculate upload throughput using bytes returned from upload_thread
-    uint64_t upload_total_bytes = upload_arg.bytes;
-    double upload_throughput = (upload_total_bytes * 8.0) / upload_elapsed; // in bps
 
     printf("Upload: sent %llu bytes\n", upload_total_bytes);
     printf("Upload: elapsed time %.3f seconds\n", upload_elapsed);
     printf("Upload: throughput %.2f Mb/s\n", upload_throughput / 1e6);
-
     if (upload_lat_arg.completed)
     {
         upload_min_rtt = upload_rtts[0];

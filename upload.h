@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "common.h"
+#include "handle_result.h"
 
 #define TCP_PORT_UPLOAD 20252
 #define UDP_PORT_RESULTS 20251
@@ -45,6 +46,6 @@ void *upload_client_thread(void *arg);
 
 // Inicia el cliente de subida TCP, lanza N hilos y recibe resultados UDP
 // Retorna el número total de bytes enviados
-int client_upload(const char *srv_ip, int N);
+int client_upload(const char *srv_ip, int N, struct BW_result *bw_result);
 
 #endif // UPLOAD_H

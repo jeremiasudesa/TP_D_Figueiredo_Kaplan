@@ -240,7 +240,7 @@ void *upload_client_thread(void *arg)
   return NULL;
 }
 
-int client_upload(const char *srv_ip, int N)
+int client_upload(const char *srv_ip, int N, struct BW_result *bw_result)
 {
   struct sockaddr_in srv_addr = {
       .sin_family = AF_INET,
@@ -335,8 +335,7 @@ int client_upload(const char *srv_ip, int N)
   }
 
   // Deserializar y mostrar
-  struct BW_result bw;
-  if (unpackResultPayload(&bw, buf, r) < 0)
+  if (unpackResultPayload(bw_result, buf, r) < 0)
   {
     fprintf(stderr, "Error unpacking result payload\n");
     close(udp_sock);
@@ -344,18 +343,18 @@ int client_upload(const char *srv_ip, int N)
   }
 
   printf("Measurement ID: 0x%02X%02X%02X%02X\n",
-         bw.id_measurement >> 24,
-         (bw.id_measurement >> 16) & 0xFF,
-         (bw.id_measurement >> 8) & 0xFF,
-         bw.id_measurement & 0xFF);
+         (*bw_result).id_measurement >> 24,
+         ((*bw_result).id_measurement >> 16) & 0xFF,
+         ((*bw_result).id_measurement >> 8) & 0xFF,
+         (*bw_result).id_measurement & 0xFF);
 
   // Calculate total bytes sent
   uint64_t total_bytes = 0;
   for (int i = 0; i < N; i++)
   {
     printf("Conn %d: bytes=%llu, duration=%.3f s\n",
-           i + 1, (unsigned long long)bw.conn_bytes[i], bw.conn_duration[i]);
-    total_bytes += bw.conn_bytes[i];
+           i + 1, (unsigned long long)(*bw_result).conn_bytes[i], (*bw_result).conn_duration[i]);
+    total_bytes += (*bw_result).conn_bytes[i];
   }
 
   printf("Total upload bytes: %llu\n", (unsigned long long)total_bytes);
