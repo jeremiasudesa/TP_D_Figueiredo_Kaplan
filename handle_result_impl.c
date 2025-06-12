@@ -1,0 +1,150 @@
+#ifdef __APPLE__
+#include <machine/endian.h>
+#include <libkern/OSByteOrder.h>
+#define htobe16(x) OSSwapHostToBigInt16(x)
+#define htole16(x) OSSwapHostToLittleInt16(x)
+#define be16toh(x) OSSwapBigToHostInt16(x)
+#define le16toh(x) OSSwapLittleToHostInt16(x)
+#define htobe32(x) OSSwapHostToBigInt32(x)
+#define htole32(x) OSSwapHostToLittleInt32(x)
+#define be32toh(x) OSSwapBigToHostInt32(x)
+#define le32toh(x) OSSwapLittleToHostInt32(x)
+#define htobe64(x) OSSwapHostToBigInt64(x)
+#define htole64(x) OSSwapHostToLittleInt64(x)
+#define be64toh(x) OSSwapBigToHostInt64(x)
+#define le64toh(x) OSSwapLittleToHostInt64(x)
+#else
+#include <endian.h>
+#endif
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <arpa/inet.h>
+#include <string.h>
+#include <ctype.h>
+#include <errno.h>
+#include "handle_result.h"
+
+void printBwResult(struct BW_result bw_result) {
+  printf("id 0x%x\n", bw_result.id_measurement);
+  for (int i = 0; i < NUM_CONN; i++) {
+    printf("conn %2d  %20llu bytes %.3f seconds\n", i, 
+           (unsigned long long)bw_result.conn_bytes[i], 
+           bw_result.conn_duration[i]);
+  }
+}
+
+int packResultPayload(struct BW_result bw_result, void *buffer, int buffer_size) {
+  int bytes_temp_buffer = 0;
+  char my_buffer[500];
+  memset(my_buffer, 0, sizeof(my_buffer));
+  
+  // Pack id
+  uint32_t netorder_id = htonl(bw_result.id_measurement);
+  memcpy(my_buffer, &netorder_id, sizeof(netorder_id));
+  bytes_temp_buffer += sizeof(netorder_id);
+
+  // Pack each connection measurement
+  for (int i = 0; i < NUM_CONN; i++) {
+    char aux[20];
+    int  n_aux;
+    memset(aux, 0, sizeof(aux));
+    n_aux = sprintf(aux, "%llu,%.3f\n", 
+                   (unsigned long long)bw_result.conn_bytes[i], 
+                   bw_result.conn_duration[i]);
+    memcpy(my_buffer+bytes_temp_buffer, aux, n_aux);
+    bytes_temp_buffer += n_aux;
+  }
+  
+  if (buffer_size >= bytes_temp_buffer) {
+    /* Copy results to buffer given */
+    memcpy(buffer, my_buffer, bytes_temp_buffer);
+  }
+  else {
+    /* Not enough buffer space */
+    return -1;
+  }
+
+  return bytes_temp_buffer;
+}
+
+int unpackResultPayload(struct BW_result *bw_result, void *buffer, int buffer_size) {
+  if ((size_t)buffer_size < sizeof(uint32_t)) {
+    /* Buffer too small for minimum data */
+    return E_MINIMUM_DATA; 
+  }
+
+  char *buf = (char *)buffer;
+  int offset = 0;
+    
+  // Unpack id_measurement
+  uint32_t netorder_id;
+  memcpy(&netorder_id, buf + offset, sizeof(netorder_id));
+  bw_result->id_measurement = ntohl(netorder_id);
+  offset += sizeof(netorder_id);
+
+  // Unpack each connection measurement
+  for (int i = 0; i < NUM_CONN; i++) {
+    if (offset >= buffer_size) {
+      /* Not enough data */
+      return E_NOT_ENOUGH_DATA; 
+    }
+    
+    /* Find the end of current line (newline character) */
+    int line_start = offset;
+    int line_end = line_start;
+    while (line_end < buffer_size && buf[line_end] != '\n') {
+        line_end++;
+    }
+    if (line_end >= buffer_size) {
+      /* No newline found or buffer overflow */
+      return E_NO_NEW_LINE; 
+    }
+    
+    // Extract the line (without newline)
+    int line_length = line_end - line_start;
+    char line[40]; /*  Should be enough for the format  20 + 1+ 6  */
+    if ((size_t)line_length >= sizeof(line)) {
+      /* Line too long */
+      return E_LINE_TOO_LONG; 
+    }
+    memcpy(line, buf + line_start, line_length);
+    line[line_length] = '\0'; /* Null terminate C-string */
+    
+    // Parse the line: "conn_bytes,conn_duration"
+    char *comma_pos = strchr(line, ',');
+    if (comma_pos == NULL) {
+      /* Invalid format - no comma found */
+      return E_INV_LINE_FORMAT; 
+    }
+    
+    // Split at comma
+    *comma_pos = '\0';
+    char *bytes_str = line;
+    char *duration_str = comma_pos + 1;
+    
+    /* Parse bytes (uint64_t) */
+    char *endptr;
+    errno = 0;
+    unsigned long long parsed_bytes = strtoull(bytes_str, &endptr, 10);
+    if (errno != 0 || *endptr != '\0') {
+        return E_NUMBER_PARSE;
+    }
+    bw_result->conn_bytes[i] = (uint64_t)parsed_bytes;
+    
+    /* Parse duration (double) */
+    errno = 0;
+    double parsed_duration = strtod(duration_str, &endptr);
+    if (errno != 0 || *endptr != '\0') {
+        return E_NUMBER_PARSE;
+    }
+    bw_result->conn_duration[i] = parsed_duration;
+    
+    /* Move to next line (skip the newline) */
+    offset = line_end + 1;
+  }
+  
+  return offset; // Return total bytes consumed
+}

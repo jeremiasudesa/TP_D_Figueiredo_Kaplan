@@ -38,12 +38,13 @@ typedef struct
 void *upload_server_thread(void *arg);
 
 // Inicia el servidor de subida TCP, lanza N hilos y envía resultados por UDP
-int server_upload(upload_result_t *res, int N, int T);
+int server_upload(int N, int T);
 
 // Envía datos al servidor en el cliente de subida
 void *upload_client_thread(void *arg);
 
 // Inicia el cliente de subida TCP, lanza N hilos y recibe resultados UDP
+// Retorna el número total de bytes enviados
 int client_upload(const char *srv_ip, int N);
 
 #endif // UPLOAD_H

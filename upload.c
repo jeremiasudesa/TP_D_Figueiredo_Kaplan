@@ -2,13 +2,14 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h> // Added for malloc, free, rand
 #include <string.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 #include "common.h"
 #include "upload.h"
-#include "handle_result.c"
+#include "handle_result.h"
 
 void *upload_server_thread(void *arg)
 {
@@ -38,8 +39,9 @@ void *upload_server_thread(void *arg)
   pthread_exit(NULL);
 }
 
-int server_upload(upload_result_t *res, int N, int T)
+int server_upload(int N, int T)
 {
+  upload_result_t res[N];
   // Crear socket TCP
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
   if (sockfd < 0)
@@ -142,7 +144,8 @@ int server_upload(upload_result_t *res, int N, int T)
     established_connections++;
   }
 
-  printf("Aceptadas %d conexiones del mismo cliente: %d\n", established_connections, (uint32_t)first_test_id);
+  printf("Aceptadas %d conexiones del mismo cliente: %02X%02X%02X%02X\n", established_connections,
+         first_test_id[0], first_test_id[1], first_test_id[2], first_test_id[3]);
 
   // Esperar a que terminen todos los hilos
   for (int i = 0; i < established_connections; i++)
@@ -152,7 +155,11 @@ int server_upload(upload_result_t *res, int N, int T)
 
   // --- Agrupar y enviar resultados por UDP ---
   struct BW_result bw_result;
-  bw_result.id_measurement = (uint32_t)res[0].test_id;
+  // Convert test_id bytes to uint32_t safely
+  bw_result.id_measurement = ((uint32_t)res[0].test_id[0] << 24) |
+                             ((uint32_t)res[0].test_id[1] << 16) |
+                             ((uint32_t)res[0].test_id[2] << 8) |
+                             ((uint32_t)res[0].test_id[3]);
 
   for (int i = 0; i < established_connections; i++)
   {
@@ -329,7 +336,7 @@ int client_upload(const char *srv_ip, int N)
 
   // Deserializar y mostrar
   struct BW_result bw;
-  if (unpackResultPayload(buf, r, &bw) < 0)
+  if (unpackResultPayload(&bw, buf, r) < 0)
   {
     fprintf(stderr, "Error unpacking result payload\n");
     close(udp_sock);
@@ -342,12 +349,17 @@ int client_upload(const char *srv_ip, int N)
          (bw.id_measurement >> 8) & 0xFF,
          bw.id_measurement & 0xFF);
 
+  // Calculate total bytes sent
+  uint64_t total_bytes = 0;
   for (int i = 0; i < N; i++)
   {
-    printf("Conn %d: bytes=%lu, duration=%.3f s\n",
-           i + 1, bw.conn_bytes[i], bw.conn_duration[i]);
+    printf("Conn %d: bytes=%llu, duration=%.3f s\n",
+           i + 1, (unsigned long long)bw.conn_bytes[i], bw.conn_duration[i]);
+    total_bytes += bw.conn_bytes[i];
   }
 
+  printf("Total upload bytes: %llu\n", (unsigned long long)total_bytes);
+
   close(udp_sock);
-  return 0;
+  return total_bytes; // Return total bytes sent for upload throughput calculation
 }

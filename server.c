@@ -11,10 +11,13 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <netdb.h>
+#include <sys/select.h> /* For select(), fd_set, FD_ZERO, FD_SET */
 
 #include "config.h"
 #include "download.h"
 #include "latency.h"
+#include "upload.h"
+#include "handle_result.h" /* For struct BW_result and packResultPayload */
 
 #define IPV4_STRLEN 16
 #define MAX_LATENCY_REQUESTS 1000
@@ -22,6 +25,14 @@
 static int create_listening_socket(const char *port);
 static void *latency_server_thread();
 static void *download_worker(void *arg);
+static void *upload_worker(void *arg);
+
+// Upload server handler thread
+static void *upload_worker(void *arg)
+{
+    server_upload(N_CONN, T_SECONDS);
+    return NULL;
+}
 
 static int create_listening_socket(const char *port)
 {
@@ -89,6 +100,7 @@ static void *download_worker(void *arg)
 
 int main()
 {
+    // Start latency echo service in background
     pthread_t latency_thr;
     if (pthread_create(&latency_thr, NULL, latency_echo_server, NULL) != 0)
     {
@@ -97,11 +109,13 @@ int main()
     }
     pthread_detach(latency_thr);
 
+    // Set up download service in main thread
     int srv_fd = create_listening_socket(TCP_PORT_DOWN);
     if (srv_fd < 0)
         return EXIT_FAILURE;
 
-    printf("server: waiting for TCP connections on port %s …\n", TCP_PORT_DOWN);
+    printf("server: waiting for TCP connections on port %s (download) and port %d (upload)...\n",
+           TCP_PORT_DOWN, TCP_PORT_UPLOAD);
 
     while (1)
     {
@@ -117,7 +131,7 @@ int main()
 
         char ip[IPV4_STRLEN];
         inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof ip);
-        printf("server: connection from %s\n", ip);
+        printf("server: download connection from %s\n", ip);
 
         int *fd_ptr = malloc(sizeof *fd_ptr);
         if (!fd_ptr)
@@ -137,6 +151,15 @@ int main()
             continue;
         }
         pthread_detach(thr);
+
+        // Start upload service in background
+        pthread_t upload_thr;
+        if (pthread_create(&upload_thr, NULL, upload_worker, NULL) != 0)
+        {
+            perror("pthread_create (upload thread)");
+            return EXIT_FAILURE;
+        }
+        pthread_detach(upload_thr);
     }
 
     close(srv_fd);

@@ -8,10 +8,12 @@ LDFLAGS = -pthread
 COMMON_SRC = common.c
 DOWNLOAD_SRC = download.c
 LATENCY_SRC = latency.c
+UPLOAD_SRC = upload.c
+HANDLE_RESULT_SRC = handle_result_impl.c
 
 # Main targets
-CLIENT_SRCS = client.c $(COMMON_SRC) $(DOWNLOAD_SRC) $(LATENCY_SRC)
-SERVER_SRCS = server.c $(COMMON_SRC) $(DOWNLOAD_SRC) $(LATENCY_SRC)
+CLIENT_SRCS = client.c $(COMMON_SRC) $(DOWNLOAD_SRC) $(LATENCY_SRC) $(UPLOAD_SRC) $(HANDLE_RESULT_SRC)
+SERVER_SRCS = server.c $(COMMON_SRC) $(DOWNLOAD_SRC) $(LATENCY_SRC) $(UPLOAD_SRC) $(HANDLE_RESULT_SRC)
 
 TARGETS = client server
 
