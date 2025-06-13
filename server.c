@@ -178,7 +178,8 @@ int main()
 
         // Start upload service in background
         pthread_t upload_thr;
-        if (pthread_create(&upload_thr, NULL, upload_worker, NULL) != 0)
+        upload_worker_args_t upload_args = {.results_lock = &results_lock};
+        if (pthread_create(&upload_thr, NULL, upload_worker, &upload_args) != 0)
         {
             perror("pthread_create (upload thread)");
             return EXIT_FAILURE;

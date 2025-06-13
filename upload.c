@@ -42,6 +42,7 @@ void *upload_server_thread(void *arg)
 
 int server_upload(int N, int T, results_lock_t *results_lock)
 {
+  printf("server: starting upload server with %d connections for %d seconds...\n", N, T);
   upload_result_t res[N];
   // Crear socket TCP
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -214,6 +215,8 @@ void *upload_client_thread(void *arg)
 
 int client_upload(const char *srv_ip, int N, struct BW_result *bw_result)
 {
+  printf("client: starting upload test to %s:%d with %d connections...\n",
+         srv_ip, TCP_PORT_UPLOAD, N);
   struct sockaddr_in srv_addr = {
       .sin_family = AF_INET,
       .sin_port = htons(TCP_PORT_UPLOAD)};
@@ -226,11 +229,13 @@ int client_upload(const char *srv_ip, int N, struct BW_result *bw_result)
     socks[i] = socket(AF_INET, SOCK_STREAM, 0);
     if (socks[i] < 0)
     {
+      fprintf(stderr, "Error creating socket %d\n", i);
       die("socket()");
     }
     if (connect(socks[i], (struct sockaddr *)&srv_addr,
                 sizeof(srv_addr)) < 0)
     {
+      fprintf(stderr, "Error connecting socket %d\n", i);
       die("connect()");
     }
   }
@@ -264,6 +269,7 @@ int client_upload(const char *srv_ip, int N, struct BW_result *bw_result)
                        upload_client_thread,
                        &args[i]) != 0)
     {
+      fprintf(stderr, "Error creating upload client thread %d\n", i);
       die("pthread_create()");
     }
   }
@@ -274,6 +280,8 @@ int client_upload(const char *srv_ip, int N, struct BW_result *bw_result)
     pthread_join(threads[i], NULL);
     close(socks[i]);
   }
+
+  printf("client: all upload threads completed\n");
 
   // --- Fase UDP: solicitar resultados al servidor ---
   int udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -286,6 +294,9 @@ int client_upload(const char *srv_ip, int N, struct BW_result *bw_result)
       .sin_family = AF_INET,
       .sin_port = htons(UDP_PORT_RESULTS),
       .sin_addr.s_addr = inet_addr(srv_ip)};
+
+  printf("Consulto resultados al servidor UDP %s:%d\n",
+         srv_ip, UDP_PORT_RESULTS);
 
   // Enviar test_id
   if (sendto(udp_sock, test_id, sizeof(test_id), 0,
@@ -305,6 +316,8 @@ int client_upload(const char *srv_ip, int N, struct BW_result *bw_result)
   {
     die("recvfrom UDP");
   }
+
+  printf("Resultados recibidos del servidor UDP: %zd bytes\n", r);
 
   // Deserializar y mostrar
   if (unpackResultPayload(bw_result, buf, r) < 0)
