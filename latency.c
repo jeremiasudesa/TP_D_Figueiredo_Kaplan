@@ -21,7 +21,7 @@ int send_results_udp(int sockfd, uint8_t *resp, results_lock_t *results_lock,
         uint32_t net_resp;
         memcpy(&net_resp, resp, sizeof(net_resp)); // pull the 4 bytes into a uint32_t
         uint32_t resp_id = ntohl(net_resp);        // convert from network (big-endian) into host order
-        if (bw_results[i].id_measurement == resp_id)
+        if (ntohl(bw_results[i].id_measurement) == resp_id)
         {
             // Empaqueta el resultado en el buffer de respuesta
             uint8_t buff[MAX_PAYLOAD];

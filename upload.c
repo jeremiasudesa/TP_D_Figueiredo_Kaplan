@@ -2,7 +2,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h> // Added for malloc, free, rand
+#include <stdlib.h> // Added for malloc, free, randa
 #include <string.h>
 #include <sys/time.h>
 #include <time.h>
@@ -11,10 +11,14 @@
 #include "upload.h"
 #include "handle_result.h"
 #include "config.h"
+#include <unistd.h>
 
 void *upload_server_thread(void *arg)
 {
   srv_thread_arg_t *args = arg;
+  pthread_mutex_lock(&args->res_mutex->mutex);
+  *(args->bytes_recv) = 6;
+  pthread_mutex_unlock(&args->res_mutex->mutex);
 
   // Leer datos hasta que se cumpla el tiempo T o se cierre la conexión
   uint8_t buf[MAX_PAYLOAD];
@@ -32,17 +36,21 @@ void *upload_server_thread(void *arg)
     {
       break;
     }
-    args->res->bytes_recv += r;
-  }
 
-  args->res->duration = diff_ts(&args->start, &now);
+    pthread_mutex_lock(&args->res_mutex->mutex);
+    *(args->bytes_recv) += r;
+    *(args->duration) = diff_ts(&args->start, &now);
+    pthread_mutex_unlock(&args->res_mutex->mutex);
+  }
   close(args->conn_fd);
-  pthread_exit(NULL);
+  return NULL;
 }
 
 int server_upload(int N, int T, results_lock_t *results_lock)
 {
-  upload_result_t res[N];
+  struct BW_result *bw_results = results_lock->results;
+  printf("server: starting upload test with %d connections for %d seconds...\n",
+         N, T);
 
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
   if (sockfd < 0)
@@ -78,21 +86,10 @@ int server_upload(int N, int T, results_lock_t *results_lock)
     return -1;
   }
 
-  // Lanzar hilos para manejar N conexiones simultáneas
-  pthread_t threads[N];
-  srv_thread_arg_t args[N];
-
-  struct sockaddr_in client_addr;
-  socklen_t len = sizeof(client_addr);
-
-  uint8_t first_test_id[4];
-  in_addr_t first_ip;
-  int established_connections = 0;
-
-  for (int i = 0; i < N; i++)
+  while (1)
   {
-    printf("server: esperando conexión de upload %d...\n", i + 1);
-    // Aceptar conexión entrante
+    struct sockaddr_in client_addr;
+    socklen_t len = sizeof(client_addr);
     int conn_fd = accept(sockfd, (struct sockaddr *)&client_addr, &len);
     if (conn_fd < 0)
     {
@@ -110,84 +107,75 @@ int server_upload(int N, int T, results_lock_t *results_lock)
       continue;
     }
 
-    // Checkeo si las conexiones pertenecen al mismo cliente
-    if (established_connections == 0)
+    srv_thread_arg_t *thread_args = malloc(sizeof(*thread_args));
+    if (!thread_args)
     {
-      memcpy(first_test_id, header, 4);
-      first_ip = client_addr.sin_addr.s_addr;
+      perror("malloc");
+      close(conn_fd);
+      continue;
+    }
+
+    uint32_t test_id;
+    memcpy(&test_id, header, 4);
+    uint16_t conn_id;
+    memcpy(&conn_id, header + 4, 2);
+
+    pthread_mutex_lock(&results_lock->mutex);
+    int idx = -1;
+
+    uint16_t client_conn = ntohs(conn_id);
+    if (client_conn == 1)
+    {
+      // first sub-connection: grab a free slot
+      for (int i = 0; i < MAX_CLIENTS * N; i++)
+      {
+        if (bw_results[i].id_measurement == 0)
+        {
+          idx = i;
+          bw_results[i].id_measurement = test_id;
+          break;
+        }
+      }
+      if (idx < 0)
+      {
+        fprintf(stderr, "No free slot for new test\n");
+      }
     }
     else
     {
-      if (memcmp(header, first_test_id, 4) != 0 ||
-          client_addr.sin_addr.s_addr != first_ip)
+      // subsequent sub-connections: find the same slot
+      for (int i = 0; i < MAX_CLIENTS * N; i++)
       {
-        fprintf(stderr,
-                "Conexión ignorada: test_id o IP no coinciden\n");
-        close(conn_fd);
-        continue;
+        if (bw_results[i].id_measurement == test_id)
+        {
+          idx = i;
+
+          break;
+        }
+      }
+      if (idx < 0)
+      {
+        fprintf(stderr, "Cannot find slot for existing test\n");
       }
     }
+    pthread_mutex_unlock(&results_lock->mutex);
 
-    // 3) Aquí ya admito la conexión “válida”
-    args[established_connections].conn_fd = conn_fd;
-    args[established_connections].res = &res[established_connections];
-    args[established_connections].start = start;
-    args[established_connections].T = T;
+    thread_args->conn_fd = conn_fd;
+    thread_args->bytes_recv = &(bw_results[idx].conn_bytes[client_conn - 1]);
+    thread_args->duration = &(bw_results[idx].conn_duration[client_conn - 1]);
+    thread_args->start = start;
+    thread_args->T = T;
+    thread_args->res_mutex = results_lock;
 
-    res[established_connections].bytes_recv = 6;
-    res[established_connections].conn_id = ntohs(*(uint16_t *)(header + 4));
-    memcpy(res[established_connections].test_id, header, 4);
-
-    // Lanzar hilo para manejar la conexión
-    if (pthread_create(&threads[established_connections], NULL,
-                       upload_server_thread,
-                       &args[established_connections]) != 0)
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, upload_server_thread, thread_args) != 0)
     {
-      perror("pthread_create");
-      close(sockfd);
-      return -1;
-    }
-
-    established_connections++;
-  }
-
-  printf("Aceptadas %d conexiones del mismo cliente: %02X%02X%02X%02X\n", established_connections,
-         first_test_id[0], first_test_id[1], first_test_id[2], first_test_id[3]);
-
-  // Esperar a que terminen todos los hilos
-  for (int i = 0; i < established_connections; i++)
-  {
-    pthread_join(threads[i], NULL);
-  }
-
-  // --- Agrupar resultados
-  struct BW_result bw_result;
-  // Convert test_id bytes to uint32_t safely
-  bw_result.id_measurement = ((uint32_t)res[0].test_id[0] << 24) |
-                             ((uint32_t)res[0].test_id[1] << 16) |
-                             ((uint32_t)res[0].test_id[2] << 8) |
-                             ((uint32_t)res[0].test_id[3]);
-
-  for (int i = 0; i < established_connections; i++)
-  {
-    bw_result.conn_bytes[i] = res[i].bytes_recv;
-    bw_result.conn_duration[i] = res[i].duration;
-  }
-
-  // Guardar resultados en el lock
-  pthread_mutex_lock(&results_lock->mutex);
-  for (int i = 0; i < MAX_CLIENTS; i++)
-  {
-    if (results_lock->results[i].id_measurement == 0)
-    {
-      results_lock->results[i] = bw_result;
-      break;
+      fprintf(stderr, "Error creating upload server thread\n");
+      free(thread_args);
+      close(conn_fd);
+      continue;
     }
   }
-  pthread_mutex_unlock(&results_lock->mutex);
-
-  close(sockfd);
-  return 0;
 }
 
 void *upload_client_thread(void *arg)
@@ -202,7 +190,7 @@ void *upload_client_thread(void *arg)
   if (!buf)
   {
     perror("malloc");
-    pthread_exit(NULL);
+    return NULL;
   }
   memset(buf, 0xAA, args->buf_size);
 
@@ -250,6 +238,7 @@ int client_upload(const char *srv_ip, int N, struct BW_result *bw_result)
   printf("client: connected %d sockets to server %s:%d\n",
          N, srv_ip, TCP_PORT_UPLOAD);
   // Generar test_id aleatorio
+  srand(time(NULL) ^ getpid()); // Seed with current time and PID for more randomness
   uint8_t test_id[4];
   do
   {

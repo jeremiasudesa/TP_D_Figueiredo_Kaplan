@@ -37,8 +37,7 @@ typedef struct upload_worker_args
 static void *upload_worker(void *arg)
 {
     upload_worker_args_t *args = arg;
-    while (1)
-        server_upload(N_CONN, T_SECONDS, args->results_lock);
+    server_upload(N_CONN, T_SECONDS, args->results_lock);
     return NULL;
 }
 

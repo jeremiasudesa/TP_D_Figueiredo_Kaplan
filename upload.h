@@ -9,15 +9,6 @@
 #define UDP_PORT_RESULTS 20251
 #define MAX_PAYLOAD (8 * 1024)
 
-// Resultado de cada conexión de subida
-typedef struct
-{
-    uint8_t test_id[4];  // Identificador de prueba
-    uint16_t conn_id;    // Identificador de conexión (1…N)
-    uint64_t bytes_recv; // Total de bytes leídos
-    double duration;     // Segundos efectivos de lectura
-} upload_result_t;
-
 // Parámetros para cada hilo del cliente de subida
 typedef struct
 {
@@ -29,10 +20,12 @@ typedef struct
 // Parámetros para cada hilo del servidor de subida
 typedef struct
 {
-    int conn_fd;           // Descriptor del socket de escucha
-    upload_result_t *res;  // Puntero donde escribir el resultado
-    struct timespec start; // Tiempo de inicio de la conexión
-    int T;                 // Tiempo total de la conexión en segundos
+    int conn_fd;               // Descriptor del socket de escucha
+    uint64_t *bytes_recv;      // Total de bytes leídos
+    double *duration;          // Segundos efectivos de lectura
+    struct timespec start;     // Tiempo de inicio de la conexión
+    int T;                     // Tiempo total de la conexión en segundos
+    results_lock_t *res_mutex; // Mutex para proteger el acceso a los resultados
 } srv_thread_arg_t;
 
 // Atiende una conexión TCP de subida en el servidor
