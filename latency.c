@@ -18,10 +18,14 @@ int send_results_udp(int sockfd, uint8_t *resp, results_lock_t *results_lock,
     struct BW_result *bw_results = results_lock->results;
     for (int i = 0; i < MAX_CLIENTS; i++)
     {
-        if (memcmp(&bw_results[i].id_measurement, resp, sizeof(bw_results[i].id_measurement)) == 0)
+        uint32_t net_resp;
+        memcpy(&net_resp, resp, sizeof(net_resp)); // pull the 4 bytes into a uint32_t
+        uint32_t resp_id = ntohl(net_resp);        // convert from network (big-endian) into host order
+        if (bw_results[i].id_measurement == resp_id)
         {
             // Empaqueta el resultado en el buffer de respuesta
-            int bytes_packed = packResultPayload(bw_results[i], resp, LAT_PAYLOAD_SIZE);
+            uint8_t buff[MAX_PAYLOAD];
+            int bytes_packed = packResultPayload(bw_results[i], buff, sizeof(buff));
             if (bytes_packed < 0)
             {
                 fprintf(stderr, "Error packing result payload\n");
@@ -30,7 +34,7 @@ int send_results_udp(int sockfd, uint8_t *resp, results_lock_t *results_lock,
             }
 
             // Envía el resultado empaquetado al cliente
-            if (sendto(sockfd, resp, bytes_packed, 0, (struct sockaddr *)&client_addr, client_addr_len) < 0)
+            if (sendto(sockfd, buff, bytes_packed, 0, (struct sockaddr *)&client_addr, client_addr_len) < 0)
             {
                 perror("sendto result");
                 pthread_mutex_unlock(&results_lock->mutex);
@@ -67,6 +71,7 @@ void *latency_echo_server(void *args)
     while (1)
     {
         ssize_t r = recvfrom(sockfd, resp, LAT_PAYLOAD_SIZE, 0, (struct sockaddr *)&client_addr, &client_addr_len);
+        printf("Received packet, resp[0]=0x%02X\n", resp[0]);
         if (r < 0)
         {
             perror("recvfrom");
@@ -87,14 +92,17 @@ void *latency_echo_server(void *args)
             }
         }
 
-        // Responde con el mismo paquete recibido
-        if (sendto(sockfd, resp, LAT_PAYLOAD_SIZE, 0, (struct sockaddr *)&client_addr, addr_len) < 0)
+        else
         {
-            perror("sendto");
-            continue; // Ignora errores de envío
+            // Responde con el mismo paquete recibido
+            if (sendto(sockfd, resp, LAT_PAYLOAD_SIZE, 0, (struct sockaddr *)&client_addr, addr_len) < 0)
+            {
+                perror("sendto");
+                continue; // Ignora errores de envío
+            }
+            printf("Echoed packet to %s:%d\n",
+                   inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
         }
-        printf("Echoed packet to %s:%d\n",
-               inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
     }
     close(sockfd);
     return NULL;

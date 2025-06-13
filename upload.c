@@ -42,7 +42,6 @@ void *upload_server_thread(void *arg)
 
 int server_upload(int N, int T, results_lock_t *results_lock)
 {
-  printf("server: starting upload server with %d connections for %d seconds...\n", N, T);
   upload_result_t res[N];
 
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -210,7 +209,7 @@ void *upload_client_thread(void *arg)
   // Enviar datos en bucle
   while (1)
   {
-    if (send(args->sockfd, buf, args->buf_size, 0) <= 0)
+    if (send(args->sockfd, buf, args->buf_size, MSG_NOSIGNAL) <= 0)
     {
       break;
     }
@@ -233,20 +232,23 @@ int client_upload(const char *srv_ip, int N, struct BW_result *bw_result)
   int socks[N];
   for (int i = 0; i < N; i++)
   {
+    printf("client: creating socket %d...\n", i);
     socks[i] = socket(AF_INET, SOCK_STREAM, 0);
     if (socks[i] < 0)
     {
-      fprintf(stderr, "Error creating socket %d\n", i);
+      printf("Error creating socket %d\n", i);
       die("socket()");
     }
     if (connect(socks[i], (struct sockaddr *)&srv_addr,
                 sizeof(srv_addr)) < 0)
     {
-      fprintf(stderr, "Error connecting socket %d\n", i);
+      printf("Error connecting socket %d\n", i);
       die("connect()");
     }
   }
 
+  printf("client: connected %d sockets to server %s:%d\n",
+         N, srv_ip, TCP_PORT_UPLOAD);
   // Generar test_id aleatorio
   uint8_t test_id[4];
   do
@@ -279,6 +281,8 @@ int client_upload(const char *srv_ip, int N, struct BW_result *bw_result)
       fprintf(stderr, "Error creating upload client thread %d\n", i);
       die("pthread_create()");
     }
+    printf("client: started upload thread %d with header %02X%02X%02X%02X%02X%02X\n",
+           i, header[0], header[1], header[2], header[3], header[4], header[5]);
   }
 
   // Esperar a que terminen los hilos
@@ -300,19 +304,25 @@ int client_upload(const char *srv_ip, int N, struct BW_result *bw_result)
   struct sockaddr_in udp_srv = {
       .sin_family = AF_INET,
       .sin_port = htons(UDP_PORT_RESULTS),
-      .sin_addr.s_addr = inet_addr(srv_ip)};
+  };
+
+  inet_pton(AF_INET, srv_ip, &udp_srv.sin_addr);
 
   printf("Consulto resultados al servidor UDP %s:%d\n",
          srv_ip, UDP_PORT_RESULTS);
 
   // Enviar test_id
-  if (sendto(udp_sock, test_id, sizeof(test_id), 0,
-             (struct sockaddr *)&udp_srv,
-             sizeof(udp_srv)) != sizeof(test_id))
+  ssize_t sent = sendto(udp_sock, test_id, sizeof(test_id), 0,
+                        (struct sockaddr *)&udp_srv, sizeof(udp_srv));
+  if (sent < 0)
   {
-    die("sendto UDP");
+    perror("sendto UDP failed"); // <-- this will print the errno reason
+    fprintf(stderr, "  target is %s:%d\n",
+            inet_ntoa(udp_srv.sin_addr),
+            ntohs(udp_srv.sin_port));
+    close(udp_sock);
+    return -1;
   }
-
   // Recibir resultados
   uint8_t buf[MAX_PAYLOAD];
   socklen_t addr_len = sizeof(udp_srv);
