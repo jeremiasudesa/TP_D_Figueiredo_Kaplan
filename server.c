@@ -36,8 +36,9 @@ typedef struct upload_worker_args
 // Upload server handler thread
 static void *upload_worker(void *arg)
 {
-    upload_worker_args_t *args = (upload_worker_args_t *)arg;
-    server_upload(N_CONN, T_SECONDS, args->results_lock);
+    upload_worker_args_t *args = arg;
+    while (1)
+        server_upload(N_CONN, T_SECONDS, args->results_lock);
     return NULL;
 }
 
@@ -123,7 +124,7 @@ int main()
         return EXIT_FAILURE;
     }
 
-    // Start latency echo service in background
+    // Empiezo latency echo
     pthread_t latency_thr;
     echo_server_args_t echo_args = {.results_lock = &results_lock};
     if (pthread_create(&latency_thr, NULL, latency_echo_server, &echo_args) != 0)
@@ -132,6 +133,16 @@ int main()
         return EXIT_FAILURE;
     }
     pthread_detach(latency_thr);
+
+    // Ahora para upload
+    pthread_t upload_thr;
+    upload_worker_args_t up_args = {.results_lock = &results_lock};
+    if (pthread_create(&upload_thr, NULL, upload_worker, &up_args) != 0)
+    {
+        perror("pthread_create (upload thread)");
+        return EXIT_FAILURE;
+    }
+    pthread_detach(upload_thr);
 
     // Set up download service in main thread
     int srv_fd = create_listening_socket(TCP_PORT_DOWN);
@@ -175,16 +186,6 @@ int main()
             continue;
         }
         pthread_detach(thr);
-
-        // Start upload service in background
-        pthread_t upload_thr;
-        upload_worker_args_t upload_args = {.results_lock = &results_lock};
-        if (pthread_create(&upload_thr, NULL, upload_worker, &upload_args) != 0)
-        {
-            perror("pthread_create (upload thread)");
-            return EXIT_FAILURE;
-        }
-        pthread_detach(upload_thr);
     }
 
     close(srv_fd);

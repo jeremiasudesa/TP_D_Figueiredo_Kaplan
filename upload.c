@@ -44,7 +44,7 @@ int server_upload(int N, int T, results_lock_t *results_lock)
 {
   printf("server: starting upload server with %d connections for %d seconds...\n", N, T);
   upload_result_t res[N];
-  // Crear socket TCP
+
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
   if (sockfd < 0)
   {
@@ -52,7 +52,14 @@ int server_upload(int N, int T, results_lock_t *results_lock)
     return -1;
   }
 
-  // Configurar dirección del servidor
+  int yes = 1;
+  if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes) == -1)
+  {
+    perror("setsockopt");
+    close(sockfd);
+    return -1;
+  }
+
   struct sockaddr_in srv_tcp_addr = {
       .sin_family = AF_INET,
       .sin_addr.s_addr = INADDR_ANY,
@@ -85,6 +92,7 @@ int server_upload(int N, int T, results_lock_t *results_lock)
 
   for (int i = 0; i < N; i++)
   {
+    printf("server: esperando conexión de upload %d...\n", i + 1);
     // Aceptar conexión entrante
     int conn_fd = accept(sockfd, (struct sockaddr *)&client_addr, &len);
     if (conn_fd < 0)
@@ -94,8 +102,7 @@ int server_upload(int N, int T, results_lock_t *results_lock)
     }
     struct timespec start = now_ts();
 
-    // 1) Leer header de 6 bytes
-    uint8_t header[6], pre_test_id[4];
+    uint8_t header[6];
     ssize_t r = recv(conn_fd, header, sizeof(header), 0);
     if (r < 0)
     {
@@ -128,8 +135,7 @@ int server_upload(int N, int T, results_lock_t *results_lock)
     args[established_connections].start = start;
     args[established_connections].T = T;
 
-    // Inicializo el resultado (incluye los 6 bytes del header)
-    res[established_connections].bytes_recv = 6; // Inicializar bytes recibidos
+    res[established_connections].bytes_recv = 6;
     res[established_connections].conn_id = ntohs(*(uint16_t *)(header + 4));
     memcpy(res[established_connections].test_id, header, 4);
 
@@ -181,7 +187,8 @@ int server_upload(int N, int T, results_lock_t *results_lock)
   }
   pthread_mutex_unlock(&results_lock->mutex);
 
-  return 0; // Retornar 0 para indicar éxito
+  close(sockfd);
+  return 0;
 }
 
 void *upload_client_thread(void *arg)
